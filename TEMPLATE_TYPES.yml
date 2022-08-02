@@ -1,0 +1,968 @@
+#File : simple-param.yml
+parameters:
+    - name: yesNO # name of the parameter ; required
+      type :boolean #datatype of the parameter;required
+      default: false
+
+
+steps:
+    - script : echo ${{parameter.yesNo}}
+
+
+#File : azure-pipelines.yml
+trigger :
+    - main
+
+extends :
+    template : simple-param.yml
+    parameters :
+        yesNo: false # set to a non-boolean value to have build fail
+
+
+
+#parameters to select a template at a runtime
+#In this example we will use experimenta.yml
+
+#azure-pipelines.yml
+paramters:
+    - name : experimentalTemplate
+      displayName : 'Use experimental build process?'
+      type : boolean
+      default : false
+
+steps :
+    - ${{if eq(parameters.experimentalTemplate , True)}}:
+        - template:experimenta.yml
+    - ${{if not(eq(parameters.experimentalTemplate , True))}}:
+        - template : stable.yml
+
+
+
+
+#All standard datatypes used in YAML schema format
+parameters:
+    - name : myString
+      type : myString
+      default: a string
+    - name : myMultistring
+      type : string
+      default: default
+      values:
+      - default
+      - ubuntu
+    - name : myNumber
+      type : myNumber
+      default: 2
+      values:
+        - 1
+        - 2
+        - 4
+        - 8
+        - 16
+    - name : myBoolean
+      type : boolean
+      default: true
+    - name : myObject
+      type : myObject
+      default:
+      foo : FOO
+      bar : BAR
+      things:
+        - one
+        - two
+        - three
+        nested :
+        one : Hitesh
+        two : Raji
+        three: Asjad
+        four : Arisha
+        count : 3
+    - name : myStep
+      type:step
+      default :
+        script: echo my step
+    - name : mySteplist
+      type : mySteplist
+      default :
+        - script : echo step one
+        - script : echo step two
+
+
+trigger: none
+
+jobs:
+   - job: stepList
+     steps : ${{parameters.mySteplist}}
+   - job: myStep
+     steps:
+       - ${{paramters.myStep}}
+# We can iterate through an object and print each string in the object
+parameters:
+    - name : listOfStrings
+      type : object
+      default:
+      - one
+      - two
+    steps:
+        - ${{each value in paramters.listOfStrings}}:
+          - script :  echo ${{value}}
+         # - script : echo ${{if eq(parameters.mySteplist)}} :
+
+# File: start.yml
+parameters:
+- name: buildSteps # the name of the parameter is buildSteps
+type: stepList # data type is StepList
+default: [] # default value of buildSteps
+stages:
+- stage: secure_buildstage
+pool:
+vmImage: windows-latest
+jobs:
+- job: secure_buildjob
+steps:
+- script: echo This happens before code
+displayName: 'Base: Pre-build'
+- script: echo Building
+displayName: 'Base: Build'
+- ${{ each step in parameters.buildSteps }}:
+- ${{ each pair in step }}:
+${{ if ne(pair.value, 'CmdLine@2') }}:
+${{ pair.key }}: ${{ pair.value }}
+${{ if eq(pair.value, 'CmdLine@2') }}:
+# Step is rejected by raising a YAML syntax error: Unexpected value 'CmdLine@2'
+'${{ pair.value }}': error
+- script: echo This happens after code
+displayName: 'Base: Signing'
+To increasesecurity,you can enforcethata pipelineextends from a particular template.Thefile start.yml
+defines the parameter buildSteps , which is then used in the pipeline azure-pipelines.yml . In start.yml , if a
+buildStep gets passed with a script step, then it is rejected and the pipeline build fails.When extending from a
+template,you can increasesecurity by adding a required templateapproval.
+# File: azure-pipelines.yml
+trigger:
+- main
+extends:
+template: start.yml
+parameters:
+buildSteps:
+- bash: echo Test #Passes
+displayName: succeed
+- bash: echo "Test"
+displayName: succeed
+# Step is rejected by raising a YAML syntax error: Unexpected value 'CmdLine@2'
+- task: CmdLine@2
+inputs:
+script: echo "Script Test"
+# Step is rejected by raising a YAML syntax error: Unexpected value 'CmdLine@2'
+- script: echo "Script Test"
+
+# File: azure-pipelines.yml
+trigger:
+- none
+extends:
+template: resource-template.yml
+# File: resource-template.yml
+resources:
+pipelines:
+- pipeline: my-pipeline
+source: sourcePipeline
+steps:
+- script: echo "Testing resource template"
+
+#testing-template.yml
+parameters:
+- name: testSet
+type: jobList
+jobs:
+- ${{ each testJob in parameters.testSet }}:
+- ${{ if eq(testJob.templateContext.expectedHTTPResponseCode, 200) }}:
+- job:
+steps:
+- powershell: 'Invoke-RestMethod -Uri https://blogs.msdn.microsoft.com/powershell/feed/ | Format-Table
+-Property Title, pubDate'
+- ${{ testJob.steps }}
+- ${{ if eq(testJob.templateContext.expectedHTTPResponseCode, 500) }}:
+- job:
+steps:
+- powershell: 'Get-ChildItem -Path Env:\'
+- ${{ testJob.steps }}
+#azure-pipeline.yml
+trigger: none
+pool:
+vmImage: ubuntu-latest
+extends:
+template: testing-template.yml
+parameters:
+testSet:
+- job: positive_test
+templateContext:
+expectedHTTPResponseCode: 200
+steps:
+- script: echo "Run positive test"
+- job: negative_test
+templateContext:
+expectedHTTPResponseCode: 500
+steps:
+- script: echo "Run negative test"
+# File: templates/include-npm-steps.yml
+steps:
+- script: npm install
+- script: yarn install
+- script: npm run compile
+You can copy content from one YAML and reuseit in a different YAML. Copying content from one YAML to
+another saves you from having to manually includethesamelogic in multiple places.The
+include-npm-steps.yml filetemplatecontains steps thatarereused in azure-pipelines.yml .
+Templatefiles need to exist on your filesystem at thestart ofa pipelinerun. You can't referencetemplates in an artifact.
+# File: azure-pipelines.yml
+jobs:
+- job: Linux
+pool:
+vmImage: 'ubuntu-latest'
+steps:
+- template: templates/include-npm-steps.yml # Template reference
+- job: Windows
+pool:
+vmImage: 'windows-latest'
+steps:
+- template: templates/include-npm-steps.yml # Template reference
+# File: templates/npm-steps.yml
+steps:
+- script: npm install
+- script: npm test
+# File: azure-pipelines.yml
+jobs:
+- job: Linux
+pool:
+vmImage: 'ubuntu-latest'
+steps:
+- template: templates/npm-steps.yml # Template reference
+- job: macOS
+pool:
+vmImage: 'macOS-latest'
+steps:
+- template: templates/npm-steps.yml # Template reference
+- job: Windows
+pool:
+vmImage: 'windows-latest'
+steps:
+- script: echo This script runs before the template's steps, only on Windows.
+- template: templates/npm-steps.yml # Template reference
+- script: echo This step runs after the template's steps.
+# File: templates/jobs.yml
+jobs:
+- job: Ubuntu
+pool:
+vmImage: 'ubuntu-latest'
+steps:
+- bash: echo "Hello Ubuntu"
+- job: Windows
+pool:
+vmImage: 'windows-latest'
+steps:
+- bash: echo "Hello Windows"
+# File: azure-pipelines.yml
+jobs:
+- template: templates/jobs.yml # Template reference
+# File: templates/jobs.yml
+jobs:
+- job:
+pool:
+vmImage: 'ubuntu-latest'
+steps:
+- bash: echo "Hello Ubuntu"
+- job:
+pool:
+vmImage: 'windows-latest'
+steps:
+- bash: echo "Hello Windows"
+# File: azure-pipelines.yml
+jobs:
+- template: templates/jobs.yml # Template reference
+- template: templates/jobs.yml # Template reference
+- template: templates/jobs.yml # Template reference
+# File: templates/jobs.yml
+jobs:
+- job:
+pool:
+vmImage: 'ubuntu-latest'
+steps:
+- bash: echo "Hello Ubuntu"
+- job:
+pool:
+vmImage: 'windows-latest'
+steps:
+- bash: echo "Hello Windows"
+# File: azure-pipelines.yml
+jobs:
+- template: templates/jobs.yml # Template reference
+- template: templates/jobs.yml # Template reference
+- template: templates/jobs.yml # Template reference
+# File: templates/jobs.yml
+jobs:
+- job:
+pool:
+vmImage: 'ubuntu-latest'
+steps:
+- bash: echo "Hello Ubuntu"
+- job:
+pool:
+vmImage: 'windows-latest'
+steps:
+- bash: echo "Hello Windows"
+# File: azure-pipelines.yml
+jobs:
+- template: templates/jobs.yml # Template reference
+- template: templates/jobs.yml # Template reference
+- template: templates/jobs.yml # Template reference
+# File: templates/stages1.yml
+stages:
+- stage: Angular
+jobs:
+- job: angularinstall
+steps:
+- script: npm install angular
+# File: templates/stages2.yml
+stages:
+- stage: Build
+jobs:
+- job: build
+steps:
+- script: npm run build
+# File: azure-pipelines.yml
+trigger:
+- main
+pool:
+vmImage: 'ubuntu-latest'
+stages:
+- stage: Install
+jobs:
+- job: npminstall
+steps:
+- task: Npm@1
+inputs:
+command: 'install'
+- template: templates/stages1.yml
+- template: templates/stages2.yml
+#Job, stage, and step templates with parameters
+# File: templates/npm-with-params.yml
+parameters:
+- name: name # defaults for any parameters that aren't specified
+default: ''
+- name: vmImage
+default: ''
+jobs:
+- job: ${{ parameters.name }}
+pool:
+vmImage: ${{ parameters.vmImage }}
+steps:
+- script: npm install
+- script: npm test
+# File: azure-pipelines.yml
+jobs:
+- template: templates/npm-with-params.yml # Template reference
+parameters:
+name: Linux
+vmImage: 'ubuntu-latest'
+- template: templates/npm-with-params.yml # Template reference
+parameters:
+name: macOS
+vmImage: 'macOS-latest'
+- template: templates/npm-with-params.yml # Template reference
+parameters:
+name: Windows
+vmImage: 'windows-latest'
+# File: templates/steps-with-params.yml
+parameters:
+- name: 'runExtendedTests' # defaults for any parameters that aren't specified
+type: boolean
+default: false
+steps:
+- script: npm test
+- ${{ if eq(parameters.runExtendedTests, true) }}:
+- script: npm test --extended
+# File: azure-pipelines.yml
+steps:
+- script: npm install
+- template: templates/steps-with-params.yml # Template reference
+parameters:
+runExtendedTests: 'true'
+# azure-pipelines.yml
+jobs:
+- template: process.yml
+parameters:
+pool: # this parameter is called `pool`
+vmImage: ubuntu-latest # and it's a mapping rather than a string
+# process.yml
+parameters:
+- name: 'pool'
+type: object
+default: {}
+jobs:
+- job: build
+pool: ${{ parameters.pool }}
+# File: vars.yml
+variables:
+favoriteVeggie: 'brussels sprouts'
+# File: azure-pipelines.yml
+variables:
+- template: vars.yml # Template reference
+steps:
+- script: echo My favorite vegetable is ${{ variables.favoriteVeggie }}.
+# File: templates/package-release-with-params.yml
+parameters:
+- name: DIRECTORY
+type: string
+default: "." # defaults for any parameters that specified with "." (current directory)
+variables:
+- name: RELEASE_COMMAND
+value: grep version ${{ parameters.DIRECTORY }}/package.json | awk -F \" '{print $4}'
+
+# File: azure-pipelines.yml
+variables: # Global variables
+- template: package-release-with-params.yml # Template reference
+parameters:
+DIRECTORY: "azure/checker"
+pool:
+vmImage: 'ubuntu-latest'
+stages:
+- stage: Release_Stage
+displayName: Release Version
+variables: # Stage variables
+- template: package-release-with-params.yml # Template reference
+parameters:
+DIRECTORY: "azure/todo-list"
+jobs:
+- job: A
+steps:
+- bash: $(RELEASE_COMMAND) #output release command
+|
++-- fileA.yml
+|
++-- dir1/
+|
++-- fileB.yml
+|
++-- dir2/
+|
++-- fileC.yml
+
+# Repo: Contoso/BuildTemplates
+# File: common.yml
+parameters:
+- name: 'vmImage'
+default: 'ubuntu 16.04'
+type: string
+jobs:
+- job: Build
+pool:
+vmImage: ${{ parameters.vmImage }}
+steps:
+- script: npm install
+- script: npm test
+# Repo: Contoso/LinuxProduct
+# File: azure-pipelines.yml
+resources:
+repositories:
+- repository: templates
+type: github
+name: Contoso/BuildTemplates
+jobs:
+- template: common.yml@templates # Template reference
+# Repo: Contoso/WindowsProduct
+# File: azure-pipelines.yml
+resources:
+repositories:
+- repository: templates
+type: github
+name: Contoso/BuildTemplates
+ref: refs/tags/v1.0 # optional ref to pin to
+jobs:
+- template: common.yml@templates # Template reference
+parameters:
+vmImage: 'windows-latest'
+resources:
+repositories:
+- repository: templates
+name: Contoso/BuildTemplates
+endpoint: myServiceConnection # Azure DevOps service connection
+jobs:
+- template: common.yml@templates
+# Repo: Contoso/Central
+# File: template.yml
+jobs:
+- job: PreBuild
+steps: []
+# Template reference to the repo where this template was
+# included from - consumers of the template are expected
+# to provide a "BuildJobs.yml"
+- template: BuildJobs.yml@self
+- job: PostBuild
+steps: []
+# Repo: Contoso/MyProduct
+# File: azure-pipelines.yml
+resources:
+repositories:
+- repository: templates
+type: git
+name: Contoso/Central
+extends:
+template: template.yml@templates
+# Repo: Contoso/MyProduct
+# File: BuildJobs.yml
+jobs:
+- job: Build
+steps: []
+# File: steps/msbuild.yml
+parameters:
+- name: 'solution'
+default: '**/*.sln'
+type: string
+steps:
+- task: msbuild@1
+inputs:
+solution: ${{ parameters['solution'] }} # index syntax
+- task: vstest@2
+inputs:
+solution: ${{ parameters.solution }} # property dereference syntax
+# File: azure-pipelines.yml
+steps:
+- template: steps/msbuild.yml
+parameters:
+solution: my.sln
+# File: steps/msbuild.yml
+parameters:
+- name: 'solution'
+default: '**/*.sln'
+type: string
+steps:
+- task: msbuild@1
+inputs:
+solution: ${{ parameters['solution'] }} # index syntax
+- task: vstest@2
+inputs:
+solution: ${{ parameters.solution }} # property dereference syntax
+# File: azure-pipelines.yml
+steps:
+- template: steps/msbuild.yml
+parameters:
+solution: my.sln
+parameters:
+- name: 'restoreProjects'
+default: ''
+type: string
+- name: 'buildProjects'
+default: ''
+type: string
+steps:
+- script: echo ${{ coalesce(parameters.foo, parameters.bar, 'Nothing to see') }}
+# File: jobs/build.yml
+parameters:
+- name: 'preBuild'
+type: stepList
+default: []
+- name: 'preTest'
+type: stepList
+default: []
+- name: 'preSign'
+type: stepList
+default: []
+jobs:
+- job: Build
+pool:
+vmImage: 'windows-latest'
+steps:
+- script: cred-scan
+- ${{ parameters.preBuild }}
+- task: msbuild@1
+- ${{ parameters.preTest }}
+- task: vstest@2
+- ${{ parameters.preSign }}
+- script: sign
+# File: .vsts.ci.yml
+jobs:
+- template: jobs/build.yml
+parameters:
+preBuild:
+- script: echo hello from pre-build
+preTest:
+- script: echo hello from pre-test
+# Default values
+parameters:
+- name: 'additionalVariables'
+type: object
+default: {}
+jobs:
+- job: build
+variables:
+configuration: debug
+arch: x86
+${{ insert }}: ${{ parameters.additionalVariables }}
+steps:
+- task: msbuild@1
+- task: vstest@2
+sequence:
+When an array is inserted into an array, the nested array is flattened.
+To insert into a mapping, usethespecial property ${{ insert }} .
+jobs:
+- template: jobs/build.yml
+parameters:
+additionalVariables:
+TEST_SUITE: L0,L1
+Conditional insertion
+# File: steps/build.yml
+parameters:
+- name: 'toolset'
+default: msbuild
+type: string
+values:
+- msbuild
+- dotnet
+steps:
+# msbuild
+- ${{ if eq(parameters.toolset, 'msbuild') }}:
+- task: msbuild@1
+- task: vstest@2
+# dotnet
+- ${{ if eq(parameters.toolset, 'dotnet') }}:
+- task: dotnet@1
+inputs:
+command: build
+- task: dotnet@1
+inputs:
+command: test
+# File: azure-pipelines.yml
+steps:
+- template: steps/build.yml
+parameters:
+toolset: dotnet
+# File: steps/build.yml
+parameters:
+- name: 'debug'
+type: boolean
+default: false
+steps:
+- script: tool
+env:
+${{ if eq(parameters.debug, true) }}:
+TOOL_DEBUG: true
+TOOL_DEBUG_DIR: _dbg
+If you want to conditionally insert into a sequence or a mapping in a template, useinsertions and expression
+evaluation. You can also use if statements outside of templates as long as you usetemplatesyntax.
+#For example, to insert into a sequencein a template:
+#For example, to insert into a mapping in a template:
+steps:
+- template: steps/build.yml
+parameters:
+debug: true
+variables:
+- name: foo
+value: test
+pool:
+vmImage: 'ubuntu-latest'
+steps:
+- script: echo "start" # always runs
+- ${{ if eq(variables.foo, 'test') }}:
+- script: echo "this is a test" # runs when foo=test
+Iterative insertion
+# job.yml
+parameters:
+- name: 'jobs'
+type: jobList
+default: []
+jobs:
+- ${{ each job in parameters.jobs }}: # Each job
+- ${{ each pair in job }}: # Insert all properties other than "steps"
+${{ if ne(pair.key, 'steps') }}:
+${{ pair.key }}: ${{ pair.value }}
+steps: # Wrap the steps
+- task: SetupMyBuildTools@1 # Pre steps
+- ${{ job.steps }} # Users steps
+- task: PublishMyTelemetry@1 # Post steps
+condition: always()
+# azure-pipelines.yml
+jobs:
+- template: job.yml
+parameters:
+jobs:
+- job: A
+steps:
+- script: echo This will get sandwiched between SetupMyBuildTools and PublishMyTelemetry.
+- job: B
+steps:
+- script: echo So will this!
+You can also useconditional insertion for variables. In this example, start always prints and this is a test
+only prints when the foo variableequals test .
+The each directiveallows iterativeinsertion based on a YAML sequence(array) or mapping (key-value pairs).
+#For example,you can wrap thesteps of each job with other pre-and post-steps:
+You can also manipulatethe properties of whatever you'reiterating over.For example, to add more
+dependencies:
+# job.yml
+parameters:
+- name: 'jobs'
+type: jobList
+default: []
+jobs:
+- job: SomeSpecialTool # Run your special tool in its own job first
+steps:
+- task: RunSpecialTool@1
+- ${{ each job in parameters.jobs }}: # Then do each job
+- ${{ each pair in job }}: # Insert all properties other than "dependsOn"
+${{ if ne(pair.key, 'dependsOn') }}:
+${{ pair.key }}: ${{ pair.value }}
+dependsOn: # Inject dependency
+- SomeSpecialTool
+- ${{ if job.dependsOn }}:
+- ${{ job.dependsOn }}
+# azure-pipelines.yml
+jobs:
+- template: job.yml
+parameters:
+jobs:
+- job: A
+steps:
+- script: echo This job depends on SomeSpecialTool, even though it's not explicitly shown here.
+- job: B
+dependsOn:
+- A
+steps:
+- script: echo This job depends on both Job A and on SomeSpecialTool.
+
+# File: templates/npm-with-params.yml
+parameters:
+name: '' # defaults for any parameters that aren't specified
+vmImage: ''
+jobs:
+- job: ${{ parameters.name }}
+pool:
+vmImage: ${{ parameters.vmImage }}
+steps:
+- script: npm install
+- script: npm test
+# File: azure-pipelines.yml
+jobs:
+- template: templates/npm-with-params.yml # Template reference
+parameters:
+name: Linux
+vmImage: 'ubuntu-latest'
+- template: templates/npm-with-params.yml # Template reference
+parameters:
+name: macOS
+vmImage: 'macOS-10.13'
+- template: templates/npm-with-params.yml # Template reference
+parameters:
+name: Windows
+vmImage: 'windows-latest'
+# File: templates/steps-with-params.yml
+parameters:
+runExtendedTests: 'false' # defaults for any parameters that aren't specified
+steps:
+- script: npm test
+- ${{ if eq(parameters.runExtendedTests, 'true') }}:
+- script: npm test --extended
+# File: azure-pipelines.yml
+steps:
+- script: npm install
+- template: templates/steps-with-params.yml # Template reference
+parameters:
+runExtendedTests: 'true'
+
+# Repo: Contoso/BuildTemplates
+# File: common.yml
+parameters:
+vmImage: 'ubuntu 16.04'
+jobs:
+- job: Build
+pool:
+vmImage: ${{ parameters.vmImage }}
+steps:
+- script: npm install
+- script: npm test
+# Repo: Contoso/LinuxProduct
+# File: azure-pipelines.yml
+resources:
+repositories:
+- repository: templates
+type: github
+name: Contoso/BuildTemplates
+jobs:
+- template: common.yml@templates # Template reference
+# Repo: Contoso/WindowsProduct
+# File: azure-pipelines.yml
+resources:
+repositories:
+- repository: templates
+type: github
+name: Contoso/BuildTemplates
+ref: refs/tags/v1.0 # optional ref to pin to
+jobs:
+- template: common.yml@templates # Template reference
+parameters:
+vmImage: 'windows-latest'
+
+# File: azure-pipelines.yml
+steps:
+- template: steps/msbuild.yml
+parameters:
+solution: my.sln
+
+# File: steps/msbuild.yml
+parameters:
+solution: ''
+steps:
+- bash: |
+if [ -z "$SOLUTION" ]; then
+echo "##vso[task.logissue type=error;]Missing template parameter \"solution\""
+echo "##vso[task.complete result=Failed;]"
+fi
+env:
+SOLUTION: ${{ parameters.solution }}
+displayName: Check for required parameters
+- task: msbuild@1
+inputs:
+solution: ${{ parameters.solution }}
+- task: vstest@2
+inputs:
+solution: ${{ parameters.solution }}
+# File: azure-pipelines.yml
+# This will fail since it doesn't set the "solution" parameter to anything,
+# so the template will use its default of an empty string
+steps:
+- template: steps/msbuild.yml
+# File: jobs/build.yml
+parameters:
+preBuild: []
+preTest: []
+preSign: []
+jobs:
+- job: Build
+pool:
+vmImage: 'windows-latest'
+steps:
+- script: cred-scan
+- ${{ parameters.preBuild }}
+- task: msbuild@1
+- ${{ parameters.preTest }}
+- task: vstest@2
+- ${{ parameters.preSign }}
+- script: sign
+# File: .vsts.ci.yml
+jobs:
+- template: jobs/build.yml
+parameters:
+preBuild:
+- script: echo hello from pre-build
+preTest:
+- script: echo hello from pre-test
+# Default values
+parameters:
+additionalVariables: {}
+jobs:
+- job: build
+variables:
+configuration: debug
+arch: x86
+${{ insert }}: ${{ parameters.additionalVariables }}
+steps:
+- task: msbuild@1
+- task: vstest@2
+jobs:
+- template: jobs/build.yml
+parameters:
+additionalVariables:
+TEST_SUITE: L0,L1
+# File: steps/build.yml
+parameters:
+toolset: msbuild
+steps:
+# msbuild
+- ${{ if eq(parameters.toolset, 'msbuild') }}:
+- task: msbuild@1
+- task: vstest@2
+# dotnet
+- ${{ if eq(parameters.toolset, 'dotnet') }}:
+- task: dotnet@1
+inputs:
+command: build
+- task: dotnet@1
+inputs:
+command: test
+# File: azure-pipelines.yml
+steps:
+- template: steps/build.yml
+parameters:
+toolset: dotnet
+# File: steps/build.yml
+parameters:
+debug: false
+steps:
+- script: tool
+env:
+${{ if eq(parameters.debug, 'true') }}:
+TOOL_DEBUG: true
+TOOL_DEBUG_DIR: _dbg
+steps:
+- template: steps/build.yml
+parameters:
+debug: true
+# job.yml
+parameters:
+jobs: []
+jobs:
+- ${{ each job in parameters.jobs }}: # Each job
+- ${{ each pair in job }}: # Insert all properties other than "steps"
+${{ if ne(pair.key, 'steps') }}:
+${{ pair.key }}: ${{ pair.value }}
+steps: # Wrap the steps
+- task: SetupMyBuildTools@1 # Pre steps
+- ${{ job.steps }} # Users steps
+- task: PublishMyTelemetry@1 # Post steps
+condition: always()
+# azure-pipelines.yml
+jobs:
+- template: job.yml
+parameters:
+jobs:
+- job: A
+steps:
+- script: echo This will get sandwiched between SetupMyBuildTools and PublishMyTelemetry.
+- job: B
+steps:
+- script: echo So will this!
+# job.yml
+parameters:
+jobs: []
+jobs:
+- job: SomeSpecialTool # Run your special tool in its own job first
+steps:
+- task: RunSpecialTool@1
+- ${{ each job in parameters.jobs }}: # Then do each job
+- ${{ each pair in job }}: # Insert all properties other than "dependsOn"
+${{ if ne(pair.key, 'dependsOn') }}:
+${{ pair.key }}: ${{ pair.value }}
+dependsOn: # Inject dependency
+- SomeSpecialTool
+- ${{ if job.dependsOn }}:
+- ${{ job.dependsOn }}
+# azure-pipelines.yml
+jobs:
+- template: job.yml
+parameters:
+jobs:
+- job: A
+steps:
+- script: echo This job depends on SomeSpecialTool, even though it's not explicitly shown here.
+- job: B
+dependsOn:
+- A
+steps:
+- script: echo This job depends on both Job A and on SomeSpecialTool.
+
+
+
+
+
+
+
+
+
+
+
